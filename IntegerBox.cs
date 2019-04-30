@@ -4,267 +4,348 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 
-namespace IntegerBox
+/// <summary>
+/// A simple IntegerBox for WPF that supports Maximum, Minimum and (Left)Pad.
+/// </summary>
+public class IntegerBox : UserControl
 {
-    public class IntegerBox : UserControl
+    /// <summary>
+    /// The dependency property for the integer value entered in the TextBox.
+    /// </summary>
+    public static readonly DependencyProperty IntegerValueProperty = DependencyProperty.Register(
+        nameof(IntegerValue),
+        typeof(int?),
+        typeof(IntegerBox),
+        new FrameworkPropertyMetadata(default(int?),
+            FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
+            IntegerValuePropertyChangedCallback,
+            CoerceIntegerValueCallback));
+
+    /// <summary>
+    /// The dependency property for the left pad.
+    /// </summary>
+    public static readonly DependencyProperty PadProperty = DependencyProperty.Register(
+        nameof(Pad),
+        typeof(int),
+        typeof(IntegerBox),
+        new FrameworkPropertyMetadata(default(int),
+            FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
+            PadPropertyChangedCallback));
+
+    /// <summary>
+    /// The dependency property for the minimum value.
+    /// </summary>
+    public static readonly DependencyProperty MinimumProperty = DependencyProperty.Register(
+        nameof(Minimum),
+        typeof(int?),
+        typeof(IntegerBox),
+        new FrameworkPropertyMetadata(default(int?),
+            FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
+            MinimumPropertyChangedCallback,
+            CoerceMinimumPropertyCallback));
+
+    /// <summary>
+    /// The dependency property for the maximum value.
+    /// </summary>
+    public static readonly DependencyProperty MaximumProperty = DependencyProperty.Register(
+        nameof(Maximum),
+        typeof(int?),
+        typeof(IntegerBox),
+        new FrameworkPropertyMetadata(default(int?),
+            FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
+            MaximumPropertyChangedCallback,
+            CoerceMaximumPropertyCallback));
+
+    /// <summary>
+    /// The integer value entered through the IntegerBox.
+    /// </summary>
+    /// <remarks>
+    /// The value can be <value>null</value> if <see cref="Pad"/> is <value>0</value>.
+    /// </remarks>
+    public int? IntegerValue
     {
-        public static readonly DependencyProperty IntegerValueProperty = DependencyProperty.Register(
-            nameof(IntegerValue),
-            typeof(int?),
-            typeof(IntegerBox),
-            new FrameworkPropertyMetadata(default(int?),
-                FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
-                IntegerValuePropertyChangedCallback,
-                CoerceIntegerValueCallback));
+        get => (int?) GetValue(IntegerValueProperty);
+        set => SetValue(IntegerValueProperty, value);
+    }
 
-        public static readonly DependencyProperty PadProperty = DependencyProperty.Register(
-            nameof(Pad),
-            typeof(int),
-            typeof(IntegerBox),
-            new FrameworkPropertyMetadata(default(int),
-                FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
-                PadPropertyChangedCallback));
+    /// <summary>
+    /// The left pad for the TextBox. Determines the minimum number of digits displayed in the TextBox.
+    /// </summary>
+    /// <remarks>
+    /// The Pad property is ignored while the IntegerBox or it's children have keyboard focus.
+    /// This makes the TextBox easier to use.
+    /// </remarks>
+    public int Pad
+    {
+        get => (int) GetValue(PadProperty);
+        set => SetValue(PadProperty, value);
+    }
 
-        public static readonly DependencyProperty MinimumProperty = DependencyProperty.Register(
-            nameof(Minimum),
-            typeof(int?),
-            typeof(IntegerBox),
-            new FrameworkPropertyMetadata(default(int?),
-                FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
-                MinimumPropertyChangedCallback,
-                CoerceMinimumPropertyCallback));
+    /// <summary>
+    /// The minimum value that can be entered. <value>null</value> equals infinite.
+    /// </summary>
+    public int? Minimum
+    {
+        get => (int?) GetValue(MinimumProperty);
+        set => SetValue(MinimumProperty, value);
+    }
+    
+    /// <summary>
+    /// The maximum value that can be entered. <value>null</value> equals infinite.
+    /// </summary>
+    public int? Maximum
+    {
+        get => (int?) GetValue(MaximumProperty);
+        set => SetValue(MaximumProperty, value);
+    }
 
-        public static readonly DependencyProperty MaximumProperty = DependencyProperty.Register(
-            nameof(Maximum),
-            typeof(int?),
-            typeof(IntegerBox),
-            new FrameworkPropertyMetadata(default(int?),
-                FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
-                MaximumPropertyChangedCallback,
-                CoerceMaximumPropertyCallback));
+    public IntegerBox()
+    {
+        OnApplyTemplate();
+    }
 
-        public int? IntegerValue
+    /// <summary>
+    /// Validate that a string is a integer number.
+    /// </summary>
+    /// <param name="text">The string to test.</param>
+    /// <returns>
+    /// <value>true</value> if the string is a integer number.
+    /// </returns>
+    /// <remarks>
+    /// The method does not range check. The number can be out of bounds.
+    /// </remarks>
+    private static bool ValidateText(string text)
+    {
+        return new Regex("^-?[0-9]*$").IsMatch(text);
+    }
+
+    public override void OnApplyTemplate()
+    {
+        // Attempt to find the TextBox internally used for input
+        if (Template?.FindName("PART_TextBox", this) is TextBox partTextBox)
         {
-            get => (int?) GetValue(IntegerValueProperty);
-            set => SetValue(IntegerValueProperty, value);
+            partTextBox.PreviewTextInput += OnPreviewTextInput;
+//            partTextBox.PreviewKeyDown += OnPreviewKeyDown;
+            partTextBox.LostFocus += OnLostFocus;
+            partTextBox.TextChanged += OnTextChanged;
+            DataObject.AddPastingHandler(partTextBox, OnPaste);
+            RefreshText();
         }
 
-        public int Pad
+        base.OnApplyTemplate();
+    }
+
+    /// <summary>
+    /// Handle <see cref="IntegerValue"/> value changed. Refreshes Text.
+    /// </summary>
+    private static void IntegerValuePropertyChangedCallback(DependencyObject d,
+        DependencyPropertyChangedEventArgs e)
+    {
+        var integerBox = (IntegerBox) d;
+        integerBox.RefreshText();
+    }
+
+    /// <summary>
+    /// Handle <see cref="Minimum"/> value changed. Coerces <see cref="IntegerValue"/>.
+    /// </summary>
+    private static void MinimumPropertyChangedCallback(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        var integerBox = (IntegerBox) d;
+
+        integerBox.CoerceValue(IntegerValueProperty);
+    }
+
+    /// <summary>
+    /// Handle <see cref="Maximum"/> value changed. Coerces <see cref="IntegerValue"/>.
+    /// </summary>
+    private static void MaximumPropertyChangedCallback(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        var integerBox = (IntegerBox) d;
+
+        integerBox.CoerceValue(IntegerValueProperty);
+    }
+
+    /// <summary>
+    /// Handle <see cref="Pad"/> value changed. Refreshes Text of the TextBox.
+    /// </summary>
+    private static void PadPropertyChangedCallback(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        var integerBox = (IntegerBox) d;
+        integerBox.RefreshText();
+    }
+
+    /// <summary>
+    /// Coerces <see cref="IntegerValue"/>. Ensures that the integer value stays within bounds.
+    /// </summary>
+    /// <param name="d">The dependency object.</param>
+    /// <param name="baseValue">The input value.</param>
+    /// <returns>Returns the coerced value.</returns>
+    private static object CoerceIntegerValueCallback(DependencyObject d, object baseValue)
+    {
+        var integerBox = (IntegerBox) d;
+        var value = (int?) baseValue;
+
+        if (value == null) return null;
+        if (integerBox.Minimum != null && integerBox.Minimum > value) value = integerBox.Minimum;
+        if (integerBox.Maximum != null && integerBox.Maximum < value) value = integerBox.Maximum;
+
+        return value;
+    }
+
+    /// <summary>
+    /// Coerces <see cref="Minimum"/>. Ensures that the minimum value stays below the maximum.
+    /// </summary>
+    /// <param name="d">The dependency object.</param>
+    /// <param name="baseValue">The input value.</param>
+    /// <returns>Returns the coerced value.</returns>
+    private static object CoerceMinimumPropertyCallback(DependencyObject d, object baseValue)
+    {
+        var integerBox = (IntegerBox) d;
+        var value = (int?) baseValue;
+
+        if (value == null) return null;
+        if (integerBox.Maximum != null && integerBox.Maximum < value) value = integerBox.Maximum;
+
+        return value;
+    }
+
+    /// <summary>
+    /// Coerces <see cref="Maximum"/>. Ensures that the minimum value stays above the minimum.
+    /// </summary>
+    /// <param name="d">The dependency object.</param>
+    /// <param name="baseValue">The input value.</param>
+    /// <returns>Returns the coerced value.</returns>
+    private static object CoerceMaximumPropertyCallback(DependencyObject d, object baseValue)
+    {
+        var integerBox = (IntegerBox) d;
+        var value = (int?) baseValue;
+
+        if (value == null) return null;
+        if (integerBox.Minimum != null && integerBox.Minimum > value) value = integerBox.Minimum;
+
+        return value;
+    }
+
+    /// <summary>
+    /// Handle <see cref="TextBox.TextChanged"/> event of the TextBox used internally for the input.
+    /// </summary>
+    private void OnTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!(sender is TextBox textBox)) return;
+
+        UpdateValue(textBox.Text);
+    }
+
+    /// <summary>
+    /// Handle OnPaste event of the TextBox used internally for the input.
+    /// Cancels the operation if the inserted text would result in the updated text not being a valid number.
+    /// </summary>
+    private void OnPaste(object sender, DataObjectPastingEventArgs e)
+    {
+        if (!(sender is TextBox textBox)) return;
+        
+        if (!e.SourceDataObject.GetDataPresent(DataFormats.Text))
         {
-            get => (int) GetValue(PadProperty);
-            set => SetValue(PadProperty, value);
+            return;
         }
 
-        public int? Minimum
+        var clipboard = Convert.ToString(e.DataObject.GetData(DataFormats.Text));
+        
+        var text = textBox.SelectionLength > 0
+            ? textBox.Text.Remove(textBox.SelectionStart, textBox.SelectionLength)
+            : textBox.Text;
+        
+        text = text.Insert(textBox.CaretIndex, clipboard);
+        
+        if (!ValidateText(text))
         {
-            get => (int?) GetValue(MinimumProperty);
-            set => SetValue(MinimumProperty, value);
+            e.CancelCommand();
         }
+    }
 
-        public int? Maximum
-        {
-            get => (int?) GetValue(MaximumProperty);
-            set => SetValue(MaximumProperty, value);
-        }
+    /// <summary>
+    /// Handle PreviewTextInput event of the TextBox used internally for the input.
+    /// Cancels the operation if the inserted text would result in the updated text not being a valid number.
+    /// </summary>
+    private void OnPreviewTextInput(object sender, TextCompositionEventArgs e)
+    {
+        if (!(sender is TextBox textBox)) return;
 
-        public IntegerBox()
-        {
-            OnApplyTemplate();
-        }
+        var text = textBox.SelectionLength > 0
+            ? textBox.Text.Remove(textBox.SelectionStart, textBox.SelectionLength)
+            : textBox.Text;
 
-        private static bool ValidateText(string text)
-        {
-            return new Regex("^-?[0-9]*$").IsMatch(text);
-        }
+        text = text.Insert(textBox.CaretIndex, e.Text);
+        e.Handled = !ValidateText(text);
+    }
 
-        public override void OnApplyTemplate()
+    /// <summary>
+    /// Handle LostFocus event of the TextBox used internally for the input.
+    /// Refreshes the text.
+    /// </summary>
+    private void OnLostFocus(object sender, RoutedEventArgs e)
+    {
+        if (!(sender is TextBox _)) return;
+        RefreshText();
+    }
+
+    /// <summary>
+    /// Refreshes the text of the TextBox used internally for the input.
+    /// </summary>
+    private void RefreshText()
+    {
+        if (Template?.FindName("PART_TextBox", this) is TextBox partTextBox)
         {
-            if (Template?.FindName("PART_TextBox", this) is TextBox partTextBox)
+            // If the integer value is null set the text to empty
+            if (!IntegerValue.HasValue)
             {
-                partTextBox.PreviewTextInput += OnPreviewTextInput;
-                partTextBox.PreviewKeyDown += OnPreviewKeyDown;
-                partTextBox.LostFocus += OnLostFocus;
-                partTextBox.TextChanged += OnTextChanged;
-                DataObject.AddPastingHandler(partTextBox, OnPaste);
-                partTextBox.Text = IntegerValue?.ToString() ?? "";
-            }
-
-            base.OnApplyTemplate();
-        }
-
-        private static void IntegerValuePropertyChangedCallback(DependencyObject d,
-            DependencyPropertyChangedEventArgs e)
-        {
-            var integerBox = (IntegerBox) d;
-            integerBox.RefreshText();
-        }
-
-        private static void MinimumPropertyChangedCallback(DependencyObject d, DependencyPropertyChangedEventArgs e)
-        {
-            var integerBox = (IntegerBox) d;
-
-            if (e.NewValue != null && integerBox.IntegerValue < (int) e.NewValue)
-            {
-                integerBox.IntegerValue = (int) e.NewValue;
-                integerBox.CoerceValue(IntegerValueProperty);
-            }
-        }
-
-        private static void MaximumPropertyChangedCallback(DependencyObject d, DependencyPropertyChangedEventArgs e)
-        {
-            var integerBox = (IntegerBox) d;
-
-            if (e.NewValue != null && integerBox.IntegerValue > (int) e.NewValue)
-            {
-                integerBox.IntegerValue = (int) e.NewValue;
-                integerBox.CoerceValue(IntegerValueProperty);
-            }
-        }
-
-        private static object CoerceIntegerValueCallback(DependencyObject d, object baseValue)
-        {
-            var integerBox = (IntegerBox) d;
-            var value = (int?) baseValue;
-
-            if (value == null) return null;
-            if (integerBox.Minimum != null && integerBox.Minimum > value) value = integerBox.Minimum;
-            if (integerBox.Maximum != null && integerBox.Maximum < value) value = integerBox.Maximum;
-
-            return value;
-        }
-
-        private static object CoerceMinimumPropertyCallback(DependencyObject d, object baseValue)
-        {
-            var integerBox = (IntegerBox) d;
-            var value = (int?) baseValue;
-
-            if (value == null) return null;
-            if (integerBox.Maximum != null && integerBox.Maximum < value) value = integerBox.Maximum;
-
-            return value;
-        }
-
-        private static object CoerceMaximumPropertyCallback(DependencyObject d, object baseValue)
-        {
-            var integerBox = (IntegerBox) d;
-            var value = (int?) baseValue;
-
-            if (value == null) return null;
-            if (integerBox.Minimum != null && integerBox.Minimum > value) value = integerBox.Minimum;
-
-            return value;
-        }
-
-        private static void PadPropertyChangedCallback(DependencyObject d, DependencyPropertyChangedEventArgs e)
-        {
-            var integerBox = (IntegerBox) d;
-            integerBox.RefreshText();
-        }
-
-        private void OnTextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (!(sender is TextBox textBox)) return;
-            IntegerValue = int.TryParse(textBox.Text, out var integer) ? (int?) integer : null;
-        }
-
-        private void OnPaste(object sender, DataObjectPastingEventArgs e)
-        {
-            if (!e.SourceDataObject.GetDataPresent(DataFormats.Text))
-            {
+                partTextBox.Text = "";
                 return;
             }
 
-            var text = Convert.ToString(e.DataObject.GetData(DataFormats.Text));
-            if (!ValidateText(text))
+            var number = Math.Abs(IntegerValue.Value).ToString();
+            
+            // If the IntegerBox or a child has keyboard focus only refresh text without pad
+            if (IsKeyboardFocusWithin)
             {
-                e.CancelCommand();
-            }
-        }
-
-        private void OnPreviewKeyDown(object sender, KeyEventArgs e)
-        {
-            if (!(sender is TextBox textBox)) return;
-
-            switch (e.Key)
-            {
-                // Handle the Backspace key
-                case Key.Back:
-                    if (textBox.Text.Length != 0)
-                    {
-                        var caretIndex = textBox.CaretIndex;
-                        if (textBox.SelectionLength == 0)
-                        {
-                            if (textBox.SelectionStart > 0)
-                            {
-                                textBox.Text = textBox.Text.Remove(textBox.SelectionStart - 1, 1);
-                                textBox.CaretIndex = caretIndex - 1;
-                            }
-                        }
-                        else
-                        {
-                            textBox.Text = textBox.Text.Remove(textBox.SelectionStart, textBox.SelectionLength);
-                            textBox.CaretIndex = caretIndex;
-                        }
-                    }
-
-                    break;
-                // Handle the Delete key
-                case Key.Delete:
-                    if (textBox.Text.Length != 0)
-                    {
-                        var caretIndex = textBox.CaretIndex;
-                        textBox.Text = textBox.Text
-                            .Remove(textBox.SelectionStart, textBox.SelectionLength == 0 ? 1 : textBox.SelectionLength)
-                            .PadLeft(Pad, '0');
-                        textBox.CaretIndex = caretIndex;
-                    }
-
-                    break;
-                default:
-                    return;
-            }
-
-            e.Handled = true;
-        }
-
-        private void OnPreviewTextInput(object sender, TextCompositionEventArgs e)
-        {
-            if (!(sender is TextBox textBox)) return;
-
-            var text = textBox.SelectionLength > 0
-                ? textBox.Text.Remove(textBox.SelectionStart, textBox.SelectionLength)
-                : textBox.Text;
-
-            text = text.Insert(textBox.CaretIndex, e.Text);
-            e.Handled = !ValidateText(text);
-        }
-
-        private void OnLostFocus(object sender, RoutedEventArgs e)
-        {
-            if (!(sender is TextBox textBox)) return;
-
-            if (textBox.Text == "-")
-            {
-                textBox.Text = "";
-            }
-        }
-
-        private void RefreshText()
-        {
-            if (Template?.FindName("PART_TextBox", this) is TextBox partTextBox)
-            {
-                if (!IntegerValue.HasValue)
+                var caretIndex = partTextBox.CaretIndex;
+                partTextBox.Text = number;
+                if (caretIndex > 0 && number.Length <= Pad)
                 {
-                    partTextBox.Text = "";
-                    return;
+                    partTextBox.CaretIndex = caretIndex;
                 }
-
-                var number = Math.Abs(IntegerValue.Value).ToString();
+            }
+            // Set text with pad
+            else
+            {
                 partTextBox.Text = IntegerValue.Value < 0
                     ? "-" + number.PadLeft(Pad - 1, '0')
                     : number.PadLeft(Pad, '0');
-
             }
         }
+    }
+
+    /// <summary>
+    /// Update <see cref="IntegerValue"/> by string.
+    /// </summary>
+    private void UpdateValue(string text)
+    {
+        // If parsable just use value
+        if (int.TryParse(text, out var integer))
+        {
+            IntegerValue = integer;
+        }
+        // If not parsable to int, check if input is a number and just overflows 
+        else if (Regex.IsMatch(text, "^-?[0-9]+$"))
+        {
+            IntegerValue = text[0] == '-'
+                ? int.MinValue
+                : int.MaxValue;
+        }
+        else
+        {
+            IntegerValue = null;
+        }
+        RefreshText();
     }
 }
